@@ -173,8 +173,43 @@ class MutationAnnotator:
         self.logger.info(f"Loaded methylation file with columns: {list(meth_df.columns)}")
         self.logger.info(f"Methylation file shape: {meth_df.shape}")
 
+        # Check if file has no header (first row used as column names)
+        # This happens when column names look like data (chromosome names, positions, etc.)
+        def looks_like_data_not_header(columns):
+            """Check if column names look like data rather than headers"""
+            if len(columns) < 4:
+                return False
+
+            first_col = str(columns[0])
+            second_col = str(columns[1])
+
+            # Check if first column looks like chromosome (chr1, chr2, 1, 2, etc.)
+            chr_like = (first_col.startswith('chr') or first_col.isdigit() or first_col in ['X', 'Y', 'M', 'MT'])
+
+            # Check if second column looks like genomic position (numeric)
+            pos_like = second_col.replace('.', '').isdigit()
+
+            return chr_like and pos_like
+
         # Handle different formats and column naming
-        if len(meth_df.columns) == 4 and meth_df.columns[0] == 0:  # BED format without header (numeric columns)
+        if looks_like_data_not_header(meth_df.columns):
+            self.logger.info("Detected file without header - first row used as column names")
+            # Re-read without treating first row as header
+            try:
+                meth_df = pd.read_csv(methylation_regions, sep='\t', header=None)
+                if len(meth_df.columns) == 4:
+                    meth_df.columns = ['chr', 'start', 'end', 'methylation_level']
+                    self.logger.info("Assigned 4-column BED format column names")
+                elif len(meth_df.columns) == 5:
+                    meth_df.columns = ['chr', 'start', 'end', 'methylation_level', 'methylation_class']
+                    self.logger.info("Assigned 5-column BED format column names")
+                else:
+                    raise ValueError(f"Unexpected number of columns: {len(meth_df.columns)}")
+            except Exception as e:
+                self.logger.error(f"Failed to re-read methylation file without header: {e}")
+                raise
+
+        elif len(meth_df.columns) == 4 and meth_df.columns[0] == 0:  # BED format without header (numeric columns)
             meth_df.columns = ['chr', 'start', 'end', 'methylation_level']
             self.logger.info("Detected 4-column BED format, assigned standard column names")
         elif len(meth_df.columns) >= 4 and all(col in meth_df.columns for col in ['chr', 'start', 'end']):
@@ -196,6 +231,23 @@ class MutationAnnotator:
         else:
             raise ValueError(f"Unexpected methylation file format. Columns: {list(meth_df.columns)}")
 
+        # Ensure chromosome column is string type
+        meth_df['chr'] = meth_df['chr'].astype(str)
+
+        # Ensure start and end are numeric
+        meth_df['start'] = pd.to_numeric(meth_df['start'], errors='coerce')
+        meth_df['end'] = pd.to_numeric(meth_df['end'], errors='coerce')
+
+        # Ensure methylation_level is numeric
+        meth_df['methylation_level'] = pd.to_numeric(meth_df['methylation_level'], errors='coerce')
+
+        # Remove rows with missing essential data
+        before_cleanup = len(meth_df)
+        meth_df = meth_df.dropna(subset=['chr', 'start', 'end', 'methylation_level'])
+        after_cleanup = len(meth_df)
+        if before_cleanup != after_cleanup:
+            self.logger.info(f"Removed {before_cleanup - after_cleanup} rows with missing data")
+
         # Classify methylation if not already done
         if 'methylation_class' not in meth_df.columns:
             self.logger.info("Classifying methylation states on-the-fly")
@@ -206,6 +258,9 @@ class MutationAnnotator:
             ]
             choices = ['hypomethylated', 'intermediate', 'hypermethylated']
             meth_df['methylation_class'] = np.select(conditions, choices)
+
+        self.logger.info(f"Final methylation file shape: {meth_df.shape}")
+        self.logger.info(f"Methylation classes: {meth_df['methylation_class'].value_counts().to_dict()}")
 
         # Create BedTool objects for intersection
         mutations_bed = pybedtools.BedTool.from_dataframe(
