@@ -1,0 +1,9 @@
+2025-08-06 12:59:16,217 - INFO - Loading methylation data from test_data/synthetic_methylation.bedgraph
+2025-08-06 12:59:16,232 - INFO - Loaded 9984 methylation sites
+2025-08-06 12:59:16,246 - INFO - Adding cpg_islands annotations
+2025-08-06 12:59:16,265 - INFO - Adding promoters annotations
+2025-08-06 13:04:47,184 - INFO - Results saved to test_results/methylation_classified_regional.bed
+2025-08-06 13:04:47,184 - INFO - Summary statistics saved to test_results/methylation_classified_regional_summary.txt
+2025-08-06 13:04:48,092 - INFO - Methylation distribution plots saved to test_results/methylation_distribution.png
+2025-08-06 13:04:48,106 - INFO - Results saved to test_results/methylation_classified.bed
+2025-08-06 13:04:48,106 - INFO - Summary statistics saved to test_results/methylation_classified_summary.txt

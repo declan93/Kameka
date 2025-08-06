@@ -1,0 +1,200 @@
+# Methylation-Selection Analysis Pipeline Configuration
+# Complete configuration file with all available parameters
+
+# INPUT FILES
+# ===========
+input_files:
+  # REQUIRED: Methylation data file
+  # Formats supported: bedgraph, bismark, custom
+  methylation_data: "/path/to/your/methylation_data.bedgraph"
+  
+  # REQUIRED: At least one mutation file (germline or somatic)
+  # VCF or tab-separated formats supported
+  germline_mutations: "/path/to/your/germline_variants.vcf"
+  somatic_mutations: "/path/to/your/somatic_variants.vcf"
+  
+  # OPTIONAL: Genomic annotation files (BED format)
+  # These improve methylation classification accuracy
+  cpg_islands: "/path/to/cpg_islands.bed"
+  promoters: "/path/to/promoters.bed"
+  enhancers: "/path/to/enhancers.bed"
+  
+  # OPTIONAL: Functional annotation files
+  # These improve mutation impact assessment
+  vep_annotations: "/path/to/vep_annotations.txt"        # VEP output
+  annovar_annotations: "/path/to/annovar_output.txt"     # ANNOVAR output  
+  cadd_scores: "/path/to/cadd_scores.tsv"               # CADD pathogenicity scores
+  conservation_scores: "/path/to/conservation.tsv"      # PhyloP/GERP scores
+  
+  # OPTIONAL: Gene annotation files
+  # These enable accurate dN/dS calculations
+  gene_lengths: "/path/to/gene_lengths.tsv"             # Synonymous/non-synonymous sites
+  codon_usage: "/path/to/codon_usage.txt"               # Species-specific codon usage
+
+# ANALYSIS PARAMETERS
+# ==================
+parameters:
+  # Methylation Classification Parameters
+  # ------------------------------------
+  hypo_threshold: 0.3                    # Hypomethylation cutoff (0-1)
+  hyper_threshold: 0.7                   # Hypermethylation cutoff (0-1)
+  classification_method: "threshold"      # Options: threshold, adaptive, kmeans
+  methylation_format: "bedgraph"         # Options: bedgraph, bismark, custom
+  
+  # Regional Analysis Settings
+  regional_analysis: true                # Enable sliding window analysis
+  window_size: 1000                      # Window size for regional methylation (bp)
+  
+  # Mutation File Parameters  
+  # -----------------------
+  germline_format: "vcf"                 # Options: vcf, table
+  somatic_format: "vcf"                  # Options: vcf, table
+  
+  # Mutation Processing Options
+  calculate_burdens: true                # Calculate mutation burden metrics
+  calculate_selection: true              # Calculate preliminary selection metrics
+  
+  # Selection Analysis Parameters
+  # ----------------------------
+  min_mutations_per_gene: 5              # Minimum mutations for gene-level analysis
+  bootstrap_iterations: 1000             # Bootstrap replicates for confidence intervals
+  permutation_tests: 10000               # Permutation test replicates
+  
+  # Statistical Testing Parameters
+  # -----------------------------
+  fdr_method: "BH"                       # Multiple testing correction: BH, bonferroni, holm
+  effect_size_threshold: 0.1             # Minimum Cohen's d for biological significance
+  significance_threshold: 0.05           # Alpha level for statistical tests
+  confidence_level: 0.95                 # Confidence interval level (0-1)
+  
+  # Computational Parameters
+  # -----------------------
+  cores: 4                               # Number of CPU cores for parallel processing
+  continue_on_failure: false             # Continue pipeline if individual steps fail
+
+# OUTPUT SETTINGS
+# ==============
+output_settings:
+  # File Management
+  cleanup_intermediates: false           # Remove intermediate files after completion
+  
+  # Report Generation
+  generate_html_report: true             # Create comprehensive HTML report
+  create_plots: true                     # Generate visualization plots
+  
+  # Plot Customization
+  plot_format: "png"                     # Options: png, pdf, svg
+  plot_dpi: 300                          # Plot resolution
+  plot_width: 12                         # Plot width (inches)
+  plot_height: 8                         # Plot height (inches)
+
+# ADVANCED PARAMETERS (Optional)
+# ==============================
+advanced:
+  # Memory Management
+  chunk_size: 100000                     # Process data in chunks (for large datasets)
+  memory_efficient: false                # Enable memory-efficient processing mode
+  
+  # Methylation Classification Advanced Settings
+  adaptive_percentiles: [25, 75]         # Percentiles for adaptive thresholds
+  kmeans_clusters: 3                     # Number of clusters for k-means method
+  
+  # Selection Calculation Advanced Settings
+  dnds_method: "standard"                # Options: standard, ml, bayesian
+  neutrality_test: "likelihood_ratio"    # Options: likelihood_ratio, chi_square
+  
+  # Permutation Test Settings
+  permutation_seed: 42                   # Random seed for reproducibility
+  stratified_permutation: true           # Stratify permutations by gene properties
+  
+  # Model Selection Criteria
+  model_selection: "AIC"                 # Options: AIC, BIC, likelihood
+  convergence_tolerance: 1e-6            # Convergence criteria for iterative methods
+  max_iterations: 1000                   # Maximum iterations for optimization
+
+# QUALITY CONTROL SETTINGS
+# ========================
+quality_control:
+  # Input Validation
+  validate_coordinates: true             # Check for valid genomic coordinates
+  validate_methylation_range: true       # Check methylation values are 0-1
+  validate_vcf_format: true              # Validate VCF file structure
+  
+  # Analysis Validation  
+  min_sites_per_region: 3                # Minimum methylation sites per analysis region
+  max_dnds_ratio: 10                     # Maximum allowed dN/dS ratio (filter outliers)
+  min_coverage_depth: 5                  # Minimum sequencing depth (if available)
+  
+  # Output Validation
+  generate_qa_plots: true                # Create quality assessment plots
+  calculate_summary_stats: true          # Generate comprehensive summary statistics
+  
+# EXPERIMENTAL FEATURES (Use with caution)
+# ========================================
+experimental:
+  # Multi-scale Analysis
+  multi_scale_windows: [500, 1000, 2000] # Multiple window sizes for analysis
+  
+  # Machine Learning Integration
+  enable_ml_classification: false        # Use ML for methylation classification
+  ml_model_type: "random_forest"         # Options: random_forest, svm, neural_network
+  
+  # Network Analysis
+  gene_network_analysis: false           # Analyze selection in gene networks
+  network_file: "/path/to/gene_network.txt"
+  
+  # Temporal Analysis
+  temporal_analysis: false               # Enable time-series analysis
+  time_points: ["primary", "metastatic", "recurrent"]
+  
+  # Cross-validation
+  cross_validation: false                # Enable k-fold cross-validation
+  cv_folds: 5                           # Number of cross-validation folds
+
+# EXAMPLE FILE PATHS FOR REFERENCE
+# ================================
+# Replace with your actual file paths:
+#
+# methylation_data: "/data/methylation/WGBS_methylation.bedgraph"
+# germline_mutations: "/data/mutations/germline_variants_filtered.vcf"
+# somatic_mutations: "/data/mutations/somatic_variants_filtered.vcf"
+# cpg_islands: "/annotations/cpg_islands_hg38.bed"
+# promoters: "/annotations/promoters_hg38.bed"
+# vep_annotations: "/annotations/vep_consequences.txt"
+# cadd_scores: "/annotations/cadd_v1.6_hg38.tsv.gz"
+# gene_lengths: "/annotations/gencode_v38_gene_lengths.tsv"
+
+# PARAMETER TUNING GUIDELINES
+# ===========================
+# 
+# For different analysis goals:
+#
+# CONSERVATIVE ANALYSIS (High Confidence):
+# - hypo_threshold: 0.2, hyper_threshold: 0.8
+# - min_mutations_per_gene: 10
+# - permutation_tests: 100000
+# - effect_size_threshold: 0.2
+#
+# STANDARD ANALYSIS (Balanced):  
+# - hypo_threshold: 0.3, hyper_threshold: 0.7
+# - min_mutations_per_gene: 5
+# - permutation_tests: 10000
+# - effect_size_threshold: 0.1
+#
+# EXPLORATORY ANALYSIS (High Sensitivity):
+# - hypo_threshold: 0.4, hyper_threshold: 0.6  
+# - min_mutations_per_gene: 3
+# - permutation_tests: 1000
+# - effect_size_threshold: 0.05
+#
+# For different dataset sizes:
+#
+# LARGE DATASETS (>1M mutations):
+# - chunk_size: 50000
+# - memory_efficient: true
+# - cores: 8-16
+#
+# SMALL DATASETS (<10K mutations):
+# - min_mutations_per_gene: 2
+# - bootstrap_iterations: 10000
+# - permutation_tests: 100000
