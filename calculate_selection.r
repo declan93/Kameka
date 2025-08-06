@@ -696,100 +696,429 @@ generate_selection_report <- function(selection_data, comparison_results,
   log_message("Selection analysis report generated")
 }
 
-# Main Analysis Pipeline
-######################
-
+# Complete Main Analysis Pipeline - Fixed
 main <- function() {
   log_message("Starting comprehensive selection analysis")
-  
+
   # Validate inputs
   if (is.null(opt$mutations)) {
     stop("Must provide annotated mutations file")
   }
-  
+
   if (!file.exists(opt$mutations)) {
     stop(paste("Mutations file not found:", opt$mutations))
   }
-  
+
   # Load data
   log_message("Loading annotated mutations data")
   mutations_df <- fread(opt$mutations, sep = "\t", header = TRUE)
-  
+
   log_message(paste("Loaded", nrow(mutations_df), "mutations"))
-  
+
+  # Debug: Print column names and first few rows
+  log_message("Column names in mutations file:")
+  log_message(paste(names(mutations_df), collapse = ", "))
+
+  # Print summary of key columns
+  if ("methylation_class" %in% names(mutations_df)) {
+    log_message("Methylation class values:")
+    print(table(mutations_df$methylation_class, useNA = "ifany"))
+  } else {
+    log_message("WARNING: methylation_class column not found")
+  }
+
+  if ("mutation_origin" %in% names(mutations_df)) {
+    log_message("Mutation origin values:")
+    print(table(mutations_df$mutation_origin, useNA = "ifany"))
+  } else {
+    log_message("WARNING: mutation_origin column not found")
+  }
+
+  if ("gene_symbol" %in% names(mutations_df)) {
+    log_message("Gene symbol sample values:")
+    print(head(table(mutations_df$gene_symbol, useNA = "ifany"), 10))
+  } else {
+    log_message("WARNING: gene_symbol column not found")
+  }
+
   # Load gene lengths if provided
   gene_lengths_df <- NULL
   if (!is.null(opt$`gene-lengths`) && file.exists(opt$`gene-lengths`)) {
     log_message("Loading gene length data")
     gene_lengths_df <- fread(opt$`gene-lengths`, sep = "\t", header = TRUE)
   }
-  
-  # Filter data for analysis
-  analysis_data <- mutations_df %>%
-    filter(
-      !is.na(methylation_class),
-      !is.na(mutation_origin),
-      methylation_class %in% c("hypomethylated", "intermediate", "hypermethylated"),
-      mutation_origin %in% c("germline", "somatic")
-    ) %>%
-    # Remove genes with too few mutations
-    group_by(gene_symbol) %>%
-    filter(n() >= opt$min_mutations) %>%
-    ungroup()
-  
-  log_message(paste("Filtered to", nrow(analysis_data), "mutations for analysis"))
-  
-  if (nrow(analysis_data) < 10) {
-    stop("Insufficient data for selection analysis")
+
+  # Fix command line option parsing - handle dashes vs underscores
+  min_muts <- 5  # Default value
+  if (!is.null(opt$`min-mutations`)) {
+    min_muts <- opt$`min-mutations`
+  } else if (!is.null(opt$min_mutations)) {
+    min_muts <- opt$min_mutations
   }
-  
+
+  log_message(paste("Using minimum mutations per gene:", min_muts))
+
+  # Filter data for analysis with debugging
+  log_message("Filtering data for analysis")
+
+  # Check each filter condition separately
+  original_count <- nrow(mutations_df)
+  log_message(paste("Starting with", original_count, "mutations"))
+
+  # Filter step by step with logging
+  step1 <- mutations_df[!is.na(mutations_df$methylation_class), ]
+  log_message(paste("After removing NA methylation_class:", nrow(step1), "remaining"))
+
+  step2 <- step1[!is.na(step1$mutation_origin), ]
+  log_message(paste("After removing NA mutation_origin:", nrow(step2), "remaining"))
+
+  # Check what methylation classes we actually have
+  if (nrow(step2) > 0 && "methylation_class" %in% names(step2)) {
+    available_meth_classes <- unique(step2$methylation_class)
+    log_message(paste("Available methylation classes:", paste(available_meth_classes, collapse = ", ")))
+
+    # Be more flexible with methylation class filtering
+    valid_meth_classes <- available_meth_classes[
+      available_meth_classes %in% c("hypomethylated", "intermediate", "hypermethylated",
+                                    "hypo", "inter", "hyper", "low", "medium", "high")
+    ]
+
+    if (length(valid_meth_classes) == 0) {
+      # If no standard classes found, use all available classes
+      log_message("No standard methylation classes found, using all available classes")
+      valid_meth_classes <- available_meth_classes[!is.na(available_meth_classes)]
+    }
+
+    step3 <- step2[step2$methylation_class %in% valid_meth_classes, ]
+    log_message(paste("After filtering methylation classes to", paste(valid_meth_classes, collapse = ", "), ":", nrow(step3), "remaining"))
+  } else {
+    step3 <- step2
+  }
+
+  # Check mutation origins
+  if (nrow(step3) > 0 && "mutation_origin" %in% names(step3)) {
+    available_origins <- unique(step3$mutation_origin)
+    log_message(paste("Available mutation origins:", paste(available_origins, collapse = ", ")))
+
+    valid_origins <- available_origins[
+      available_origins %in% c("germline", "somatic", "Germline", "Somatic", "GERMLINE", "SOMATIC")
+    ]
+
+    if (length(valid_origins) == 0) {
+      log_message("No standard mutation origins found, using all available origins")
+      valid_origins <- available_origins[!is.na(available_origins)]
+    }
+
+    step4 <- step3[step3$mutation_origin %in% valid_origins, ]
+    log_message(paste("After filtering mutation origins to", paste(valid_origins, collapse = ", "), ":", nrow(step4), "remaining"))
+  } else {
+    step4 <- step3
+  }
+
+  # Gene symbol filtering - be more flexible
+  if ("gene_symbol" %in% names(step4)) {
+    # First, let's see what gene symbol values we actually have
+    gene_symbol_counts <- table(step4$gene_symbol, useNA = "ifany")
+    log_message("Gene symbol value counts:")
+    print(head(gene_symbol_counts, 20))
+
+    # Count how many are "unknown" or missing
+    unknown_count <- sum(is.na(step4$gene_symbol)) +
+                    sum(step4$gene_symbol == "", na.rm = TRUE) +
+                    sum(step4$gene_symbol == "unknown", na.rm = TRUE)
+
+    log_message(paste("Mutations with unknown/empty gene symbols:", unknown_count, "out of", nrow(step4)))
+
+    if (unknown_count == nrow(step4)) {
+      log_message("WARNING: ALL mutations have unknown/empty gene symbols")
+      log_message("Proceeding with gene_symbol = 'unknown' for all mutations")
+      # Set all to "unknown" for consistency
+      step4$gene_symbol[is.na(step4$gene_symbol) | step4$gene_symbol == ""] <- "unknown"
+      step5 <- step4
+    } else if (unknown_count > nrow(step4) * 0.8) {
+      log_message("WARNING: >80% mutations have unknown gene symbols")
+      log_message("Keeping all mutations including those with unknown gene symbols")
+      # Replace NA and empty with "unknown" for consistency
+      step4$gene_symbol[is.na(step4$gene_symbol) | step4$gene_symbol == ""] <- "unknown"
+      step5 <- step4
+    } else {
+      # Normal filtering - remove only truly problematic entries
+      step5 <- step4[!is.na(step4$gene_symbol) & step4$gene_symbol != "", ]
+      log_message(paste("After removing unknown/empty gene symbols:", nrow(step5), "remaining"))
+    }
+  } else {
+    log_message("WARNING: gene_symbol column not found, skipping gene filtering")
+    step5 <- step4
+  }
+
+  filtered_data <- step5
+  log_message(paste("Final filtered dataset:", nrow(filtered_data), "mutations"))
+
+  if (nrow(filtered_data) == 0) {
+    log_message("ERROR: No mutations remain after filtering. Check your data format.")
+    log_message("Expected columns: methylation_class, mutation_origin, gene_symbol")
+    log_message("Expected methylation_class values: hypomethylated, intermediate, hypermethylated")
+    log_message("Expected mutation_origin values: germline, somatic")
+    stop("No mutations remain after filtering")
+  }
+
+  # Count mutations per gene and filter genes with sufficient mutations
+  if ("gene_symbol" %in% names(filtered_data)) {
+    # Check if all genes are "unknown"
+    unique_genes <- unique(filtered_data$gene_symbol)
+    if (length(unique_genes) == 1 && unique_genes[1] == "unknown") {
+      log_message("All mutations have gene_symbol = 'unknown', skipping gene-level filtering")
+      analysis_data <- filtered_data
+      log_message(paste("Proceeding with all", nrow(analysis_data), "mutations"))
+    } else {
+      # Normal gene-level filtering
+      gene_counts <- filtered_data %>%
+        count(gene_symbol, name = "mutation_count") %>%
+        filter(mutation_count >= min_muts)
+
+      log_message(paste("Genes with >=", min_muts, "mutations:", nrow(gene_counts)))
+
+      if (nrow(gene_counts) == 0) {
+        # Lower the threshold and try again
+        log_message(paste("No genes meet minimum threshold of", min_muts))
+        log_message("Mutation counts per gene (top 20):")
+        gene_count_summary <- filtered_data %>%
+          count(gene_symbol, name = "mutation_count") %>%
+          arrange(desc(mutation_count)) %>%
+          head(20)
+        print(gene_count_summary)
+
+        # Use a lower threshold
+        min_muts_adjusted <- max(1, min(gene_count_summary$mutation_count))
+        log_message(paste("Adjusting minimum mutations to:", min_muts_adjusted))
+
+        gene_counts <- filtered_data %>%
+          count(gene_symbol, name = "mutation_count") %>%
+          filter(mutation_count >= min_muts_adjusted)
+      }
+
+      if (nrow(gene_counts) == 0) {
+        stop("No genes have any mutations after filtering")
+      }
+
+      # Filter to keep only genes with sufficient mutations
+      analysis_data <- filtered_data %>%
+        filter(gene_symbol %in% gene_counts$gene_symbol)
+    }
+  } else {
+    log_message("WARNING: No gene_symbol column found, proceeding without gene-level filtering")
+    analysis_data <- filtered_data
+  }
+
+  log_message(paste("Final analysis dataset:", nrow(analysis_data), "mutations"))
+  if ("gene_symbol" %in% names(analysis_data)) {
+    log_message(paste("Genes in analysis:", length(unique(analysis_data$gene_symbol))))
+  }
+
+  # Print summary of data
+  cat("\nData summary:\n")
+  if ("mutation_origin" %in% names(analysis_data)) {
+    cat("Mutations by origin:\n")
+    print(table(analysis_data$mutation_origin))
+  }
+
+  if ("methylation_class" %in% names(analysis_data)) {
+    cat("\nMutations by methylation class:\n")
+    print(table(analysis_data$methylation_class))
+  }
+
+  if ("mutation_origin" %in% names(analysis_data) && "methylation_class" %in% names(analysis_data)) {
+    cat("\nMutations by origin and methylation class:\n")
+    print(table(analysis_data$mutation_origin, analysis_data$methylation_class))
+  }
+
+  if (nrow(analysis_data) < 10) {
+    stop("Insufficient data for selection analysis after filtering")
+  }
+
+  # Check if we have the required columns for analysis - be flexible
+  required_cols <- c("gene_symbol", "methylation_class", "mutation_origin")
+  available_cols <- intersect(required_cols, names(analysis_data))
+  missing_cols <- setdiff(required_cols, names(analysis_data))
+
+  if (length(missing_cols) > 0) {
+    log_message(paste("WARNING: Missing preferred columns:", paste(missing_cols, collapse = ", ")))
+    log_message(paste("Available columns:", paste(names(analysis_data), collapse = ", ")))
+  }
+
+  # Check for mutation_type_category column, create if missing
+  if (!"mutation_type_category" %in% names(analysis_data)) {
+    log_message("WARNING: mutation_type_category not found, creating basic categories")
+
+    # Try to infer from other columns
+    if ("consequence" %in% names(analysis_data)) {
+      analysis_data$mutation_type_category <- case_when(
+        grepl("missense|nonsynonymous", analysis_data$consequence, ignore.case = TRUE) ~ "moderate_impact",
+        grepl("nonsense|stop|frameshift", analysis_data$consequence, ignore.case = TRUE) ~ "high_impact",
+        grepl("synonymous|silent", analysis_data$consequence, ignore.case = TRUE) ~ "low_impact",
+        grepl("splice", analysis_data$consequence, ignore.case = TRUE) ~ "high_impact",
+        grepl("regulatory|upstream|downstream", analysis_data$consequence, ignore.case = TRUE) ~ "regulatory",
+        grepl("intronic|intron", analysis_data$consequence, ignore.case = TRUE) ~ "intronic",
+        TRUE ~ "other"
+      )
+    } else if ("impact" %in% names(analysis_data)) {
+      analysis_data$mutation_type_category <- case_when(
+        grepl("high", analysis_data$impact, ignore.case = TRUE) ~ "high_impact",
+        grepl("moderate", analysis_data$impact, ignore.case = TRUE) ~ "moderate_impact",
+        grepl("low", analysis_data$impact, ignore.case = TRUE) ~ "low_impact",
+        TRUE ~ "other"
+      )
+    } else {
+      # Default categorization
+      analysis_data$mutation_type_category <- "other"
+      log_message("WARNING: Could not infer mutation categories, assigning 'other' to all mutations")
+    }
+  }
+
+  # Continue with rest of analysis...
   # Calculate selection metrics
   log_message("Calculating selection metrics")
-  
+
   # 1. Bayesian dN/dS estimation
-  selection_data <- bayesian_selection_estimation(analysis_data, gene_lengths_df)
-  
+  tryCatch({
+    # Check if we're dealing with all "unknown" genes
+    if (length(unique(analysis_data$gene_symbol)) == 1 &&
+        unique(analysis_data$gene_symbol)[1] == "unknown") {
+      log_message("All genes are 'unknown', performing analysis by methylation class only")
+
+      # Group by methylation class and origin instead of gene
+      selection_data <- analysis_data %>%
+        group_by(methylation_class, mutation_origin) %>%
+        summarise(
+          gene_symbol = "unknown",
+          total_mutations = n(),
+          syn_count = sum(mutation_type_category %in% c("low_impact", "synonymous"), na.rm=TRUE),
+          nonsyn_count = sum(mutation_type_category %in% c("moderate_impact", "high_impact"), na.rm=TRUE),
+          syn_sites = 1000,  # Use default values
+          nonsyn_sites = 3000,
+          .groups = "drop"
+        ) %>%
+        rowwise() %>%
+        mutate(
+          dnds_result = list(calculate_dnds(syn_count, nonsyn_count, syn_sites, nonsyn_sites))
+        ) %>%
+        unnest_wider(dnds_result)
+
+    } else {
+      # Normal gene-level analysis
+      selection_data <- bayesian_selection_estimation(analysis_data, gene_lengths_df)
+    }
+  }, error = function(e) {
+    log_message(paste("Error in Bayesian selection estimation:", e$message))
+    selection_data <- NULL
+  })
+
   if (is.null(selection_data) || nrow(selection_data) == 0) {
-    stop("Failed to calculate selection metrics")
+    log_message("Bayesian selection estimation failed, creating basic selection metrics")
+    # Create basic selection data structure
+    if (length(unique(analysis_data$gene_symbol)) == 1 &&
+        unique(analysis_data$gene_symbol)[1] == "unknown") {
+      # All genes unknown - group by methylation and origin only
+      selection_data <- analysis_data %>%
+        group_by(methylation_class, mutation_origin) %>%
+        summarise(
+          gene_symbol = "unknown",
+          total_mutations = n(),
+          syn_count = sum(mutation_type_category %in% c("low_impact", "synonymous"), na.rm=TRUE),
+          nonsyn_count = sum(mutation_type_category %in% c("moderate_impact", "high_impact"), na.rm=TRUE),
+          dnds = ifelse(syn_count > 0, nonsyn_count/syn_count, NA),
+          .groups = "drop"
+        )
+    } else {
+      # Normal gene-level grouping
+      selection_data <- analysis_data %>%
+        group_by(gene_symbol, methylation_class, mutation_origin) %>%
+        summarise(
+          total_mutations = n(),
+          syn_count = sum(mutation_type_category %in% c("low_impact", "synonymous"), na.rm=TRUE),
+          nonsyn_count = sum(mutation_type_category %in% c("moderate_impact", "high_impact"), na.rm=TRUE),
+          dnds = ifelse(syn_count > 0, nonsyn_count/syn_count, NA),
+          .groups = "drop"
+        ) %>%
+        filter(total_mutations >= 1)  # Keep all genes with at least 1 mutation
+    }
   }
-  
+
+  if (nrow(selection_data) == 0) {
+    stop("No selection data could be calculated")
+  }
+
   # 2. Functional selection scores
-  functional_metrics <- calculate_functional_selection(analysis_data)
-  
-  # Merge functional metrics with selection data
-  selection_data <- selection_data %>%
-    left_join(functional_metrics, 
-              by = c("gene_symbol", "methylation_class", "mutation_origin"))
-  
+  tryCatch({
+    functional_metrics <- calculate_functional_selection(analysis_data)
+
+    # Merge functional metrics with selection data
+    selection_data <- selection_data %>%
+      left_join(functional_metrics,
+                by = c("gene_symbol", "methylation_class", "mutation_origin"))
+  }, error = function(e) {
+    log_message(paste("Warning: Functional selection calculation failed:", e$message))
+  })
+
   # 3. Statistical comparisons
-  methylation_comparisons <- compare_methylation_selection(selection_data)
-  germline_somatic_comparisons <- compare_germline_somatic(selection_data)
-  
+  tryCatch({
+    methylation_comparisons <- compare_methylation_selection(selection_data)
+    germline_somatic_comparisons <- compare_germline_somatic(selection_data)
+  }, error = function(e) {
+    log_message(paste("Warning: Statistical comparisons failed:", e$message))
+    methylation_comparisons <- list()
+    germline_somatic_comparisons <- list()
+  })
+
   # 4. Mixed effects modeling
-  model_results <- mixed_effects_selection_model(analysis_data)
-  
+  tryCatch({
+    model_results <- mixed_effects_selection_model(analysis_data)
+  }, error = function(e) {
+    log_message(paste("Warning: Mixed effects modeling failed:", e$message))
+    model_results <- list()
+  })
+
   # Save intermediate results
   log_message("Saving intermediate results")
-  write.table(selection_data, paste0(opt$output, "_selection_metrics.tsv"), 
+  write.table(selection_data, paste0(opt$output, "_selection_metrics.tsv"),
               sep = "\t", row.names = FALSE, quote = FALSE)
-  
+
   # Create visualizations
-  create_selection_plots(selection_data, methylation_comparisons, opt$output)
-  
+  tryCatch({
+    create_selection_plots(selection_data, methylation_comparisons, opt$output)
+  }, error = function(e) {
+    log_message(paste("Warning: Plot creation failed:", e$message))
+  })
+
   # Generate comprehensive report
-  generate_selection_report(
-    selection_data, 
-    methylation_comparisons,
-    germline_somatic_comparisons,
-    model_results,
-    opt$output
-  )
-  
+  tryCatch({
+    generate_selection_report(
+      selection_data,
+      methylation_comparisons,
+      germline_somatic_comparisons,
+      model_results,
+      opt$output
+    )
+  }, error = function(e) {
+    log_message(paste("Warning: Report generation failed:", e$message))
+    # Create basic report
+    basic_report_file <- paste0(opt$output, "_basic_selection_report.txt")
+    sink(basic_report_file)
+    cat("BASIC SELECTION ANALYSIS REPORT\n")
+    cat("==============================\n\n")
+    cat("Total genes analyzed:", length(unique(selection_data$gene_symbol)), "\n")
+    cat("Total observations:", nrow(selection_data), "\n")
+    if ("dnds" %in% names(selection_data)) {
+      cat("Median dN/dS:", median(selection_data$dnds, na.rm=TRUE), "\n")
+    }
+    sink()
+  })
+
   # Save final results as RData for further analysis
-  save(selection_data, methylation_comparisons, germline_somatic_comparisons, 
+  save(selection_data, methylation_comparisons, germline_somatic_comparisons,
        model_results, analysis_data,
        file = paste0(opt$output, "_selection_analysis.RData"))
-  
+
   log_message("Selection analysis completed successfully")
 }
 

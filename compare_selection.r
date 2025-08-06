@@ -28,7 +28,7 @@ suppressPackageStartupMessages({
 
 # Command line options
 option_list <- list(
-  make_option(c("--selection-scores"), type="character", required=TRUE,
+  make_option(c("--selection-scores"), type="character",
               help="Selection scores file from calculate_selection.R", metavar="character"),
   make_option(c("--mutations"), type="character", 
               help="Original mutations file for detailed analysis", metavar="character"),
