@@ -262,19 +262,52 @@ class MutationAnnotator:
         self.logger.info(f"Final methylation file shape: {meth_df.shape}")
         self.logger.info(f"Methylation classes: {meth_df['methylation_class'].value_counts().to_dict()}")
 
+        def sort_chromosomes(df):
+            """Sort dataframe by chromosomes in proper genomic order"""
+            # Create a copy to avoid modifying the original
+            df_copy = df.copy()
+
+            # Create a sorting key for chromosomes
+            def chr_sort_key(chr_name):
+                chr_str = str(chr_name).upper()
+                if chr_str.startswith('CHR'):
+                    chr_str = chr_str[3:]  # Remove 'CHR' prefix
+
+                # Handle numeric chromosomes
+                if chr_str.isdigit():
+                    return (0, int(chr_str))
+                elif chr_str == 'X':
+                    return (1, 0)
+                elif chr_str == 'Y':
+                    return (1, 1)
+                elif chr_str in ['M', 'MT']:
+                    return (1, 2)
+                else:
+                    # Other chromosomes sorted alphabetically
+                    return (2, chr_str)
+
+            df_copy['chr_sort_key'] = df_copy['chr'].apply(chr_sort_key)
+            df_sorted = df_copy.sort_values(['chr_sort_key', 'start', 'end']).drop('chr_sort_key', axis=1)
+            return df_sorted
+
+        # Sort dataframes for bedtools compatibility
+        mutations_sorted = mutations_df[['chr', 'start', 'end']].assign(name=mutations_df.index)
+        mutations_sorted = sort_chromosomes(mutations_sorted)
+
+        meth_sorted = meth_df[['chr', 'start', 'end', 'methylation_level', 'methylation_class']]
+        meth_sorted = sort_chromosomes(meth_sorted)
+
         # Create BedTool objects for intersection
-        mutations_bed = pybedtools.BedTool.from_dataframe(
-            mutations_df[['chr', 'start', 'end']].assign(
-                name=mutations_df.index
-            )
-        )
+        mutations_bed = pybedtools.BedTool.from_dataframe(mutations_sorted)
+        methylation_bed = pybedtools.BedTool.from_dataframe(meth_sorted)
 
-        methylation_bed = pybedtools.BedTool.from_dataframe(
-            meth_df[['chr', 'start', 'end', 'methylation_level', 'methylation_class']]
-        )
-
-        # Perform intersection
-        intersected = mutations_bed.intersect(methylation_bed, wa=True, wb=True)
+        # Perform intersection with error handling
+        try:
+            intersected = mutations_bed.intersect(methylation_bed, wa=True, wb=True)
+        except Exception as e:
+            self.logger.warning(f"Bedtools intersect with sorted input failed: {e}")
+            self.logger.info("Retrying with sorted=False")
+            intersected = mutations_bed.intersect(methylation_bed, wa=True, wb=True, sorted=False)
 
         # Initialize methylation columns
         mutations_df['methylation_level'] = np.nan
@@ -321,24 +354,35 @@ class MutationAnnotator:
         if unassigned_mask.sum() > 0:
             self.logger.info(f"Finding nearest methylation sites for {unassigned_mask.sum()} mutations")
 
-            unassigned_bed = pybedtools.BedTool.from_dataframe(
-                mutations_df[unassigned_mask][['chr', 'start', 'end']].assign(
-                    name=mutations_df[unassigned_mask].index
-                )
+            # Create sorted BED file for unassigned mutations
+            unassigned_data = mutations_df[unassigned_mask][['chr', 'start', 'end']].assign(
+                name=mutations_df[unassigned_mask].index
             )
+            unassigned_data = sort_chromosomes(unassigned_data)
 
-            # Find closest methylation sites
-            closest = unassigned_bed.closest(methylation_bed, d=True)
+            unassigned_bed = pybedtools.BedTool.from_dataframe(unassigned_data)
+
+            # Find closest methylation sites (use sorted=False as backup)
+            try:
+                closest = unassigned_bed.closest(methylation_bed, d=True)
+            except Exception as e:
+                self.logger.warning(f"Bedtools closest with sorted input failed: {e}")
+                self.logger.info("Retrying with sorted=False")
+                closest = unassigned_bed.closest(methylation_bed, d=True, sorted=False)
 
             if len(closest) > 0:
                 closest_df = closest.to_dataframe()
                 for _, row in closest_df.iterrows():
                     mutation_idx = row['name']
                     if mutation_idx in mutations_df.index:
-                        distance = row['distance']
+                        distance = row.iloc[-1]  # Distance is the last column
                         if distance <= 10000:  # Within 10kb
-                            mutations_df.loc[mutation_idx, 'methylation_level'] = row['score']
-                            mutations_df.loc[mutation_idx, 'methylation_class'] = row['strand']
+                            # Get methylation info from the correct columns
+                            meth_level_idx = len(row) - 3  # methylation_level should be 3rd from end
+                            meth_class_idx = len(row) - 2  # methylation_class should be 2nd from end
+
+                            mutations_df.loc[mutation_idx, 'methylation_level'] = row.iloc[meth_level_idx]
+                            mutations_df.loc[mutation_idx, 'methylation_class'] = row.iloc[meth_class_idx]
                             mutations_df.loc[mutation_idx, 'distance_to_meth_site'] = distance
 
         # Classify remaining unknown regions as intermediate
